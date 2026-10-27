@@ -1,0 +1,23 @@
+# Python / browser test artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+playwright-report/
+test-results/
+*.log
+
+# Local configuration and credentials
+.env
+.env.*
+
+# Personal workspace data
+workspace.json
+tickets/
+attachments/
+knot_base/
+knot-native-tests/
+
+# Private development history and machine-specific notes
+WORKSPACE_DESIGN.md
