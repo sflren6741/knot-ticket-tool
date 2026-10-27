@@ -8,6 +8,11 @@ playwright-report/
 test-results/
 *.log
 
+# Local development checks (not needed to run the app)
+/test_interactions.py
+/test_compact_gantt.py
+/test_native_workspace.py
+
 # Local configuration and credentials
 .env
 .env.*

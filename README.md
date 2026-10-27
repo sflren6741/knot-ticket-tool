@@ -46,30 +46,10 @@ Removing a card or attachment unregisters it from the JSON index; existing files
 - Attachments added through the app are limited to 3 MB per file. Workspace reads are limited to 16 MB per file and 128 MB total.
 - Keep personal workspace data outside the source repository. The included ignore rules exclude the app's standard workspace paths, browser artifacts and local development notes.
 
-## Development checks
-
-The browser checks use Python, Playwright and installed Microsoft Edge. The native folder-picker check additionally requires Windows and opens an isolated test browser.
-
-For a local Windows development environment with the Python launcher installed:
-
-```powershell
-py -m venv .venv
-.\.venv\Scripts\python.exe -m pip install playwright
-.\.venv\Scripts\python.exe -m unittest discover -v
-```
-
-Run the native Windows picker check separately:
-
-```powershell
-.\.venv\Scripts\python.exe test_native_workspace.py
-```
-
-The automated suite currently has 71 browser checks. Tests use fictional data and isolated temporary workspaces. The loopback servers used by filesystem tests are test fixtures; the app itself needs no server.
-
 ## Issues
 
 Use the repository's Issues tab for bug reports and feature requests. For bugs, include the browser, expected behavior, actual behavior and reproduction steps. Share a minimal fictional example instead of a personal workspace or credentials.
 
 ## License
 
-A license has not been selected yet.
+Licensed under the [MIT License](LICENSE).
