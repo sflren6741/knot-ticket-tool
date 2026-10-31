@@ -189,6 +189,8 @@ button{border:1px solid var(--line);background:var(--paper);border-radius:7px;mi
  :root.sidebar-closed{--sidebar:0px}:root.sidebar-closed .app{grid-template-columns:minmax(0,1fr)}:root.sidebar-closed #project-sidebar{display:none}:root.details-closed{--details:0px}:root.details-closed #ticket-details{display:none}
  :root:not(.sidebar-closed) #sidebar-toggle{display:none}#details-close{margin-left:auto}
 }
+/* Project controls share the existing menu and theme system. */
+.project-tools{display:flex;gap:6px;margin-top:9px;position:relative}.project-tools>.tool-menu{flex:1;min-width:0;position:static}.project-tools summary{display:flex;align-items:center;justify-content:center;gap:5px;min-height:44px;padding:5px;font-size:11px;list-style:none}.project-tools summary::-webkit-details-marker{display:none}.project-tools summary[data-active="true"]{color:var(--accent-ink);background:var(--wash);border-color:var(--accent)}.project-tools .project-popup{left:0;right:auto;min-width:0;width:100%;max-width:100%;padding:10px;max-height:50dvh;overflow:auto}.project-tools .tool-menu:last-child .project-popup{left:0;right:auto}.project-popup .field{margin-bottom:9px}.project-popup input,.project-popup select,.project-popup button{min-height:44px}.project-popup button{width:100%}.project-filter-summary{font-size:11px;color:var(--muted);margin:7px 0 0;overflow-wrap:anywhere}.project-empty{font-size:12px;color:var(--muted);padding:10px}.project-tools .icon{width:15px;height:15px}.sidebar>nav{min-height:0;flex:1;display:flex;flex-direction:column}.projects{min-height:44px;overflow:auto;flex:1}.project{flex-shrink:0}
 </style>
 <meta name="theme-color" content="#2a78d6">
 <meta name="mobile-web-app-capable" content="yes">
@@ -216,11 +218,16 @@ button{border:1px solid var(--line);background:var(--paper);border-radius:7px;mi
 <symbol id="i-file" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5Zm9 0v6h5M8 13h8m-8 4h6"/></symbol>
 <symbol id="i-link" viewBox="0 0 24 24"><path d="m10 14 4-4m-6 7-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 0 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 0)"/></symbol>
 <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-sort" viewBox="0 0 24 24"><path d="M8 4v16m-4-4 4 4 4-4M15 5h6m-6 5h4m-4 5h2"/></symbol>
+<symbol id="i-filter" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8Z"/></symbol>
 </defs></svg>
 <div class="app" id="app" inert>
 <aside id="project-sidebar" class="sidebar" aria-label="プロジェクト一覧"><button id="sidebar-close" class="desktop-panel-control" aria-label="サイドバーを閉じる">×</button>
 <div><div class="brand"><span class="brand-mark"><svg class="icon"><use href="#i-link"/></svg></span>knot</div><div class="brand-sub">仕事のつながりを、ひと目に。</div></div>
-<nav><div class="sidebar-heading">プロジェクト<button id="project-actions" class="mobile-only" aria-label="現在のプロジェクトの操作">⋯</button><button id="add-project" title="プロジェクト追加" aria-label="プロジェクト追加">＋</button></div><div class="projects"></div></nav>
+<nav><div class="sidebar-heading">プロジェクト<button id="project-actions" class="mobile-only" aria-label="現在のプロジェクトの操作">⋯</button><button id="add-project" title="プロジェクト追加" aria-label="プロジェクト追加">＋</button></div><div class="project-tools">
+<details id="project-sort-menu" class="tool-menu"><summary aria-label="プロジェクトのソート">並べ替え</summary><div class="tool-popup project-popup"><label class="field"><span>並べ替え</span><select id="project-sort"><option value="created-asc">作成順 · 古い順</option><option value="created-desc">作成順 · 新しい順</option><option value="name-asc">名前 · A → Z</option><option value="name-desc">名前 · Z → A</option><option value="size-desc">規模 · チケットが多い順</option><option value="size-asc">規模 · チケットが少ない順</option></select></label></div></details>
+<details id="project-filter-menu" class="tool-menu"><summary aria-label="プロジェクトのフィルター">絞り込み</summary><div class="tool-popup project-popup"><label class="field"><span>プロジェクト名</span><input id="project-query" type="search" placeholder="名前で検索" autocomplete="off"></label><label class="field"><span>チケット数</span><select id="project-presence"><option value="all">すべて</option><option value="nonempty">チケットあり</option><option value="empty">空のプロジェクト</option></select></label><button id="project-filter-clear" type="button">フィルターをクリア</button></div></details>
+</div><p id="project-filter-summary" class="project-filter-summary" role="status" hidden></p><div class="projects"></div></nav>
 <div class="sidebar-foot"><strong>ローカルのワークスペース</strong>初期データは架空のサンプル<br>選択フォルダーに自動保存<br>ブラウザーに復旧コピー<br>外部接続なし<br><br>サンプル作成日：2026/10/27<br>期限の判定は今日の日付</div>
 </aside>
 <main class="shell">
@@ -605,12 +612,40 @@ function frameBoard(){const t=getTicket(selectedId)||boardTickets()[0];if(mobile
 function worldPoint(clientX,clientY){const r=$('canvas-scroll').getBoundingClientRect();return{x:(clientX-r.left-pan.x)/zoom,y:(clientY-r.top-pan.y)/zoom};}
 function zoomAt(value,x,y){const c=$('canvas-scroll').getBoundingClientRect(),point=worldPoint(x,y);zoom=Math.max(.05,Math.min(2.5,value));pan={x:x-c.left-point.x*zoom,y:y-c.top-point.y*zoom};applyZoom();}
 function zoomCenter(factor){const r=$('canvas-scroll').getBoundingClientRect();zoomAt(zoom*factor,r.left+r.width/2,r.top+r.height/2);}
+const PROJECT_VIEW_KEY='knot-project-view-v1';
+function orderedProjects(){
+ const entries=Object.entries(projectNames).filter(([id])=>id!=='all'),order=new Map(entries.map(([id],index)=>[id,index]));
+ const counts=new Map();for(const t of tickets)counts.set(t.project,(counts.get(t.project)||0)+1);
+ const sort=$('project-sort').value,query=$('project-query').value.trim().toLocaleLowerCase(),presence=$('project-presence').value;
+ const result=entries.filter(([id,name])=>(!query||name.toLocaleLowerCase().includes(query))&&(presence==='all'||(presence==='empty'?!(counts.get(id)||0):(counts.get(id)||0)>0)));
+ result.sort(([a,an],[b,bn])=>{
+  const cmp=sort.startsWith('name')?an.localeCompare(bn,document.documentElement.lang,{numeric:true,sensitivity:'base'}):sort.startsWith('size')?(counts.get(a)||0)-(counts.get(b)||0):order.get(a)-order.get(b);
+  return (sort.endsWith('desc')?-cmp:cmp)||order.get(a)-order.get(b);
+ });
+ return result;
+}
+function updateProjectView(){
+ try{localStorage.setItem(PROJECT_VIEW_KEY,JSON.stringify({sort:$('project-sort').value,presence:$('project-presence').value}));}catch{}
+ renderProjects();
+}
+for(const [id,key] of [['project-sort','sort'],['project-filter-menu','filter']]){
+ const menu=$(id==='project-sort'?'project-sort-menu':id),summary=menu.querySelector('summary');summary.insertAdjacentHTML('afterbegin',svgIcon(key));
+}
+try{const view=JSON.parse(localStorage.getItem(PROJECT_VIEW_KEY)||'{}');for(const [id,key] of [['project-sort','sort'],['project-presence','presence']]){const el=$(id);if([...el.options].some(o=>o.value===view?.[key]))el.value=view[key];}}catch{}
+$('project-sort').onchange=updateProjectView;$('project-presence').onchange=updateProjectView;$('project-query').oninput=renderProjects;
+$('project-filter-clear').onclick=()=>{$('project-query').value='';$('project-presence').value='all';updateProjectView();$('project-query').focus();};
+document.querySelector('.project-tools').addEventListener('keydown',e=>{if(e.key!=='Escape')return;const menu=e.target.closest('.tool-menu[open]');if(!menu)return;e.preventDefault();e.stopPropagation();menu.open=false;menu.querySelector('summary').focus();});
 function renderProjects(){
  $('mobile-project-name').textContent=projectNames[project];
  $('project-actions').disabled=project==='all';
  const focusButton=document.querySelector(`[data-focus="${focusMode}"]`);$('focus-summary').textContent=focusButton.childNodes[0].textContent.trim()+' ▾';
  
- document.querySelector('.projects').innerHTML=Object.entries(projectNames).sort(([a],[b])=>a==='all'?-1:b==='all'?1:0).map(([id,name])=>`<button class="project${id===project?' active':''}" data-project="${escapeHTML(id)}" aria-pressed="${id===project}">${svgIcon(id==='all'?'grid':'folder')}<span class="project-name">${escapeHTML(name)}</span><span class="count">${id==='all'?tickets.length:tickets.filter(t=>t.project===id).length}</span></button>`).join('');
+ const projects=orderedProjects(),filtering=$('project-query').value.trim()||$('project-presence').value!=='all';
+ $('project-filter-menu').querySelector('summary').dataset.active=String(!!filtering);
+ const sortSummary=$('project-sort-menu').querySelector('summary');sortSummary.dataset.active=String($('project-sort').value!=='created-asc');sortSummary.title=$('project-sort').selectedOptions[0].textContent;
+ $('project-filter-summary').hidden=!filtering;$('project-filter-summary').textContent=`${projects.length} / ${Object.keys(projectNames).filter(id=>id!=='all').length} プロジェクト`;
+ document.querySelector('.projects').innerHTML=[['all',projectNames.all],...projects].map(([id,name])=>`<button class="project${id===project?' active':''}" data-project="${escapeHTML(id)}" aria-pressed="${id===project}">${svgIcon(id==='all'?'grid':'folder')}<span class="project-name">${escapeHTML(name)}</span><span class="count">${id==='all'?tickets.length:tickets.filter(t=>t.project===id).length}</span></button>`).join('');
+ if(!projects.length)document.querySelector('.projects').insertAdjacentHTML('beforeend','<p class="project-empty">条件に一致するプロジェクトはありません。</p>');
  const hidden=visibleTickets().length-boardTickets().length;
  document.querySelectorAll('[data-focus]').forEach(b=>{b.setAttribute('aria-pressed',String(b.dataset.focus===focusMode));b.querySelector('span').textContent=projectTickets().filter(t=>matchesFocus(t,b.dataset.focus)).length;});$('project-heading').textContent=projectNames[project];$('view-count').textContent=`${focusMode==='all'?projectTickets().length+' カード':projectTickets().filter(t=>matchesFocus(t,focusMode)).length+'件に注目 / '+projectTickets().length+' カード'}${activeTab==='tickets'&&hidden?' · '+hidden+'件折りたたみ':''}${selected.size?' · '+selected.size+'件選択':''}`;
 }
@@ -954,10 +989,10 @@ function hideTooltip(){$('tooltip').hidden=true;}
 function showTooltip(el,x,y){const t=getTicket(el.dataset.tooltip);if(!t)return;$('tooltip').textContent=`${t.title}\n${t.start} → ${t.due}\n${dayNumber(t.due)-dayNumber(t.start)+1} 日間 · ${t.assignee||'未設定'} · ${projectNames[t.project]}`;$('tooltip').hidden=false;const box=$('tooltip').getBoundingClientRect();$('tooltip').style.left=Math.max(8,Math.min(x+12,innerWidth-box.width-12))+'px';$('tooltip').style.top=Math.max(8,Math.min(y+12,innerHeight-box.height-12))+'px';}
 
 // Proposals validate a cloned document; cancelled or invalid choices cannot mutate the board.
-function relationshipDocument(sourceId,targetId,kind){
- const data=JSON.parse(snapshot()),a=data.tickets.find(t=>t.id===sourceId),b=data.tickets.find(t=>t.id===targetId);
+function changeRelationship(data,sourceId,targetId,kind){
+ const a=data.tickets.find(t=>t.id===sourceId),b=data.tickets.find(t=>t.id===targetId);
  if(!a||!b||a===b)throw Error('別のカードを選んでください。');
- if(kind==='reference'){if(!data.references.some(e=>e.includes(a.id)&&e.includes(b.id)))data.references.push([a.id,b.id]);return validateDocument(data);}
+ if(kind==='reference'){if(!data.references.some(e=>e.includes(a.id)&&e.includes(b.id)))data.references.push([a.id,b.id]);return data;}
  if(!['child','after','insert','parallel'].includes(kind))throw Error('つながり方を選んでください。');
  if((kind==='after'||kind==='insert')&&(isMemo(a)||isMemo(b)))throw Error('メモには参考リンクを使用してください。');
  data.dependencies=data.dependencies.filter(([from,to])=>!(from===a.id&&to===b.id||from===b.id&&to===a.id));
@@ -976,25 +1011,43 @@ function relationshipDocument(sourceId,targetId,kind){
   const reaches=(from,to)=>{const todo=[from],seen=new Set();while(todo.length){const id=todo.pop();if(id===to)return true;if(seen.has(id))continue;seen.add(id);edges.filter(([x])=>x===id).forEach(([,y])=>todo.push(y));}return false;};
   if(reaches(a.id,b.id)||reaches(b.id,a.id))throw Error('間接的な前後関係が残っています。詳細欄で接続を確認してください。');
  }
+ return data;
+}
+function relationshipSources(sourceIds,targetId,kind,data){
+ const ids=[...new Set(Array.isArray(sourceIds)?sourceIds:[sourceIds])];
+ if(!ids.length||ids.includes(targetId)||!data.tickets.some(t=>t.id===targetId)||ids.some(id=>!data.tickets.some(t=>t.id===id)))throw Error('別のカードを選んでください。');
+ if(!['child','parallel'].includes(kind))return ids;
+ const selectedIds=new Set(ids),byId=new Map(data.tickets.map(t=>[t.id,t]));
+ // Moving a selected branch keeps its own selected descendants attached.
+ return ids.filter(id=>{let parent=byId.get(id).parent;while(parent){if(selectedIds.has(parent))return false;parent=byId.get(parent)?.parent;}return true;});
+}
+function relationshipDocument(sourceIds,targetId,kind){
+ const data=JSON.parse(snapshot()),ids=relationshipSources(sourceIds,targetId,kind,data);
+ if(kind==='insert'&&ids.length!==1)throw Error('間への挿入は1枚ずつ行ってください。');
+ for(const id of ids)changeRelationship(data,id,targetId,kind);
  return validateDocument(data);
 }
-function relationshipDialog(sourceId,targetId){
- const a=getTicket(sourceId),b=getTicket(targetId);if(!a||!b)return;
- const successors=JSON.parse(snapshot()).dependencies.filter(([from,to])=>from===b.id&&to!==a.id).map(([,to])=>getTicket(to)).filter(Boolean),names=successors.map(t=>`「${t.title}」`).join('、');
- const insertTarget=successors.length?`${names.split('、')[0]}${successors.length>1?`ほか${successors.length-1}件`:''}`:'後工程';
- const options=[['child',`「${a.title}」を「${b.title}」の子にする`,'Aの親をBに変更し、子孫もBのプロジェクトに移します。AとBの直接の前後関係は置き換えます。'],['after',`「${a.title}」を「${b.title}」の後にする`,`B → Aの順にします。親子関係は維持します。${successors.length?`Bの既存の後工程（${names}）とは並列のままです。`:''}逆向きの直接の矢印は置き換えます。`],['insert',`「${a.title}」を「${b.title}」と${insertTarget}の間に挿入する`,`B → A → 後工程の順にします。Bの直接の後工程（${names||'なし'}）は、すべてAの後ろへ移します。`],['parallel',`「${a.title}」と「${b.title}」を並列にする`,'AをBと同じ親にして配下のプロジェクトを合わせ、AとBの直接の前後関係を解除します。']];
- if(isMemo(a)||isMemo(b))options.push(['reference','参考リンクでつなぐ','作業の前後関係や親子関係は変更しません。']);
- const choices=options.map(([kind,label,note])=>{let error='';try{relationshipDocument(sourceId,targetId,kind);}catch(e){error=e.message;}return `<label class="relationship-choice"><input type="radio" name="relationship-kind" value="${kind}" ${error?'disabled':'required'}><span><strong>${escapeHTML(label)}</strong><small>${escapeHTML(error||note)}</small></span></label>`;}).join('');
- openDialog('カードのつながりを選択',`<p class="relationship-summary">A：${escapeHTML(a.title)}<br>B：${escapeHTML(b.title)}</p><p>配置は維持し、選んだつながりだけを変更します。</p>${choices}`,()=>{
+function relationshipDialog(sourceIds,targetId){
+ const ids=[...new Set(Array.isArray(sourceIds)?sourceIds:[sourceIds])],cards=ids.map(getTicket),b=getTicket(targetId);if(!cards.length||cards.some(t=>!t)||!b)return;
+ const multi=ids.length>1,a=cards[0],subject=multi?`選択した${ids.length}件`:`「${a.title}」`;
+ const successors=JSON.parse(snapshot()).dependencies.filter(([from,to])=>from===b.id&&!ids.includes(to)).map(([,to])=>getTicket(to)).filter(Boolean),names=successors.map(t=>`「${t.title}」`).join('、');
+ const insertTarget=successors.length?`「${successors[0].title}」${successors.length>1?`ほか${successors.length-1}件`:''}`:'後工程';
+ const options=[['child',`${subject}を「${b.title}」の子にする`,multi?'選択内の親子関係を保ち、最上位のカードを子にします。子孫も移動先のプロジェクトに移します。':'Aの親をBに変更し、子孫もBのプロジェクトに移します。AとBの直接の前後関係は置き換えます。'],['after',`${subject}を「${b.title}」の後にする`,multi?'Bから選択した各カードへ矢印をつなぎます。選択内の前後関係、親子関係、プロジェクトは維持します。':`B → Aの順にします。親子関係は維持します。${successors.length?`Bの既存の後工程（${names}）とは並列のままです。`:''}逆向きの直接の矢印は置き換えます。`]];
+ if(!multi)options.push(['insert',`${subject}を「${b.title}」と${insertTarget}の間に挿入する`,`B → A → 後工程の順にします。Bの直接の後工程（${names||'なし'}）は、すべてAの後ろへ移します。`]);
+ options.push(['parallel',`${subject}と「${b.title}」を並列にする`,multi?'選択内の親子関係を保ち、最上位のカードをBと同じ親にします。子孫も移動先のプロジェクトに合わせます。':'AをBと同じ親にして配下のプロジェクトを合わせ、AとBの直接の前後関係を解除します。']);
+ if(cards.some(isMemo)||isMemo(b))options.push(['reference','参考リンクでつなぐ','作業の前後関係や親子関係は変更しません。']);
+ const choices=options.map(([kind,label,note])=>{let error='';try{relationshipDocument(ids,targetId,kind);}catch(e){error=e.message;}return `<label class="relationship-choice"><input type="radio" name="relationship-kind" value="${kind}" ${error?'disabled':'required'}><span><strong>${escapeHTML(label)}</strong><small>${escapeHTML(error||note)}</small></span></label>`;}).join('');
+ const summary=multi?`${ids.length}件：${cards.map(t=>escapeHTML(t.title)).join('、')}`:escapeHTML(a.title);
+ openDialog(multi?`${ids.length}件のつながりを選択`:'カードのつながりを選択',`<p class="relationship-summary">A：${summary}<br>B：${escapeHTML(b.title)}</p><p>配置は維持し、選んだつながりをまとめて変更します。</p>${choices}`,()=>{
   const kind=$('edit-fields').querySelector('input[name="relationship-kind"]:checked')?.value;
   if(!kind)throw Error('つながり方を選んでください。');
-  const data=relationshipDocument(sourceId,targetId,kind);
+  const data=relationshipDocument(ids,targetId,kind);
   if(JSON.stringify(data)!==snapshot())mutate('カードのつながりを変更しました',()=>restore(data));
  },'つなぐ');
  $('edit-apply').disabled=!$('edit-fields').querySelector('input:not(:disabled)');
 }
 function dragTarget(g,clientX,clientY){
- if(g.mode!=='move'||!g.relationSource)return null;
+ if(g.mode!=='move'||!g.relationSources?.length)return null;
  const p=worldPoint(clientX,clientY),moving=new Set(g.positions.map(t=>t.id));
  return boardTickets().slice().reverse().find(t=>!moving.has(t.id)&&p.x>=t.x&&p.x<=t.x+224&&p.y>=t.y&&p.y<=t.y+cardHeight(t))?.id||null;
 }
@@ -1003,7 +1056,7 @@ function markDropTarget(id){$('board').querySelectorAll('.ticket').forEach(el=>e
 function beginCopyDrag(g){
  const source=g.initial.has(g.cardId)?[...g.initial]:[g.cardId],map=duplicateTickets(source,0);
  selected=new Set(source.map(id=>map.get(id)).filter(Boolean));selectedId=[...selected][0]||null;
- Object.assign(g,{mode:'move',copied:true,relationSource:null,positions:[...movementSet(selected)].map(id=>{const t=getTicket(id);return{id,x:t.x,y:t.y};})});
+ Object.assign(g,{mode:'move',copied:true,relationSources:null,positions:[...movementSet(selected)].map(id=>{const t=getTicket(id);return{id,x:t.x,y:t.y};})});
  renderAll();
 }
 function finishGesture(cancel=false){
@@ -1015,7 +1068,7 @@ function finishGesture(cancel=false){
   return;
  }
  suppressClick=true;setTimeout(()=>suppressClick=false,0);
- if(g.moved){if(g.mode==='move'){if(g.dropTarget&&getTicket(g.dropTarget)){restore(JSON.parse(g.before));renderAll();relationshipDialog(g.relationSource,g.dropTarget);return;}commit(g.before,g.copied?`${g.positions.length}件を複製しました`:`${g.positions.length}件を移動しました`);$('board').querySelector(`[data-ticket="${selectedId}"]`)?.focus({preventScroll:true});}else if(g.mode==='select')updateStatus(`${selected.size}件を選択しました`);}
+ if(g.moved){if(g.mode==='move'){if(g.dropTarget&&getTicket(g.dropTarget)){restore(JSON.parse(g.before));renderAll();relationshipDialog(g.relationSources,g.dropTarget);return;}commit(g.before,g.copied?`${g.positions.length}件を複製しました`:`${g.positions.length}件を移動しました`);$('board').querySelector(`[data-ticket="${selectedId}"]`)?.focus({preventScroll:true});}else if(g.mode==='select')updateStatus(`${selected.size}件を選択しました`);}
  else if((g.mode==='move'||g.mode==='pan')&&g.cardId){selectTicket(g.cardId);}
  else if(g.mode==='copy'&&g.cardId)selectTicket(g.cardId,true);
  else if(g.mode==='select'&&g.cardId)selectTicket(g.cardId,true);
@@ -1029,7 +1082,7 @@ $('canvas-scroll').addEventListener('pointerdown',e=>{
    if(touchPoints.size===2){lastCardTap=null;clearLongPress();heldPointerId=null;finishGesture(true);const [a,b]=[...touchPoints.values()],x=(a.x+b.x)/2,y=(a.y+b.y)/2;pinch={distance:Math.max(1,Math.hypot(a.x-b.x,a.y-b.y)),zoom,point:worldPoint(x,y)};$('canvas-scroll').setPointerCapture(e.pointerId);e.preventDefault();return;}
    if(touchPoints.size>2){e.preventDefault();return;}
   }
- if(card&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey){if(!selected.has(card.dataset.ticket))selectTicket(card.dataset.ticket);card.focus({preventScroll:true});const ids=movementSet(selected);gesture={mode:'move',relationSource:selected.size===1?card.dataset.ticket:null,before:snapshot(),positions:[...ids].map(id=>{const t=getTicket(id);return{id,x:t.x,y:t.y};}),point};}
+ if(card&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey){if(!selected.has(card.dataset.ticket))selectTicket(card.dataset.ticket);card.focus({preventScroll:true});const ids=movementSet(selected);gesture={mode:'move',relationSources:[...selected],before:snapshot(),positions:[...ids].map(id=>{const t=getTicket(id);return{id,x:t.x,y:t.y};}),point};}
  else if(card&&(e.ctrlKey||e.metaKey)&&!e.shiftKey){gesture={mode:'copy',before:snapshot(),initial:new Set(selected),point};}
  else if(e.shiftKey){gesture={mode:'select',initial:new Set(selected),point,add:e.ctrlKey||e.metaKey,cardId:card?.dataset.ticket};}
  else gesture={mode:'pan',pan:{...pan}};
