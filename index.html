@@ -1417,6 +1417,19 @@ class KnotDriveStore {
 }
 
 async function prepareKnotMigration(current,source){
+ if(source?.format==='knot-drive-pilot-export'){
+  if(source.version!==1||!Array.isArray(source.revisions)||!source.revisions.length||source.revisions.length>200)throw Error('Invalid Knot history export.');
+  if(source.unconfirmedInput)throw Error('This export includes unconfirmed input. Review it separately before importing the saved workspace.');
+  const revisions=new Map(source.revisions.map(r=>[r.operation,r]));
+  if(revisions.size!==source.revisions.length||revisions.has('root'))throw Error('Invalid Knot history export.');
+  for(const revision of revisions.values()){
+   let id=revision.operation;const seen=new Set();
+   while(id!=='root'){if(seen.has(id)||!revisions.has(id))throw Error('Workspace history is incomplete or invalid.');seen.add(id);id=revisions.get(id).parent;}
+  }
+  const parents=new Set(source.revisions.map(r=>r.parent)),heads=source.revisions.filter(r=>!parents.has(r.operation));
+  if(heads.length!==1)throw Error('This export has conflicting versions. Choose which version to keep before importing.');
+  source=heads[0].document;
+ }
  const data=normalizeWorkspaceDocument(clone(source));validateDocument(data);validateDocument(current);
  if(!data.tickets.length)throw Error('The selected workspace has no cards to migrate.');
  const fingerprint=(await KnotDriveStore.hash(new TextEncoder().encode(stableDocument(data)))).slice(0,20);
@@ -1463,18 +1476,16 @@ function installKnotDrive(){
  };
  const nativeDetails=renderDetails;
  renderDetails=function(){nativeDetails();const note=document.querySelector('.detail-note');if(note)note.textContent='Saved to your selected Google Drive workspace after confirmation.';const hint=$('attachment-input')?.closest('label')?.nextElementSibling;if(hint?.tagName==='SMALL')hint.textContent='3 MB per file. Attachments are stored separately in the selected Drive workspace.';};
- for(const p of $('help-dialog').querySelectorAll('p'))if(p.textContent.includes('単体HTML')||p.textContent.includes('フォルダー')||p.textContent.startsWith('上部の状態'))p.textContent='Use the sidebar to connect Google Drive and open a workspace. Changes save after Drive confirms them. On a failed save, editing pauses and unconfirmed input stays on this page. Recovery and complete version exports are in the account menu. This online preview retains up to 200 versions; it does not import your local workspace.';
+ for(const p of $('help-dialog').querySelectorAll('p'))if(p.textContent.includes('単体HTML')||p.textContent.includes('フォルダー')||p.textContent.startsWith('上部の状態'))p.textContent='Use the sidebar to connect Google Drive and open a workspace. Changes save after Drive confirms them. On a failed save, editing pauses and unconfirmed input stays on this page. Use Export or Import in the account menu to transfer Knot JSON files. Import previews the projects and cards before adding them. This online preview retains up to 200 versions.';
  const foot=document.querySelector('.sidebar-foot');foot.replaceChildren();
  const bar=document.createElement('section');bar.id='drive-pilot';bar.setAttribute('aria-label','Google Drive connection');
  bar.innerHTML=`<div class="drive-account"><span id="drive-avatar" aria-hidden="true">G</span><div class="drive-account-copy"><strong id="drive-user">Google Drive</strong><span id="drive-identity">Not connected</span></div><details id="drive-connection"><summary aria-label="Connection options" title="Connection options">⋯</summary><div class="drive-fields"><label id="drive-client-field">Google web client ID<input id="drive-client" autocomplete="off" value="344451565597-ltfh7fs18n5a9h8a9hoh9rr93h8o1dos.apps.googleusercontent.com" placeholder="…apps.googleusercontent.com"></label><button id="drive-switch" hidden>Choose another workspace</button><button id="drive-retry" hidden disabled>Retry save / connection</button><button id="drive-draft" hidden>Download unconfirmed input</button><button id="drive-export" disabled>Download complete history</button><small>Online preview · up to 200 saved versions. Tokens and cards are not stored in browser storage.</small></div></details></div><div class="drive-google-state"><span id="drive-google-mark" aria-hidden="true">G</span><span id="drive-health">Not connected</span></div><button id="drive-connect" class="primary">Connect Google Drive</button><details id="drive-workspace-picker"><summary aria-label="Choose workspace">${svgIcon('folder')}<span id="drive-workspace-slot"></span><span aria-hidden="true">⌄</span></summary><div class="drive-picker-fields"><label>Workspace<select id="drive-folders"><option value="">Choose a workspace</option></select></label><button id="drive-open" disabled>Open workspace</button><label>New workspace name<input id="drive-new-name" value="My workspace" maxlength="200"></label><button id="drive-create" disabled>Create new workspace</button></div></details><div id="drive-save-line"></div><p id="drive-status" role="status">Connect Google Drive to open your workspace.</p>`;
  foot.append(bar);
  const connection=$('drive-connection'),picker=$('drive-workspace-picker');
- const importButton=document.createElement('button');importButton.id='drive-import';importButton.textContent='Import AI task snapshot';
+ $('drive-export').textContent='Export';$('drive-export').title='Download workspace JSON with complete saved history';
+ const importButton=document.createElement('button');importButton.id='drive-import';importButton.textContent='Import';importButton.title='Add projects from a Knot JSON file';
  const importFile=document.createElement('input');importFile.id='drive-import-file';importFile.type='file';importFile.accept='.json,application/json';importFile.hidden=true;
  connection.querySelector('.drive-fields').prepend(importButton,importFile);
- const migrateButton=document.createElement('button');migrateButton.id='drive-migrate';migrateButton.textContent='Import Knot workspace';
- const migrateFile=document.createElement('input');migrateFile.id='drive-migrate-file';migrateFile.type='file';migrateFile.accept='.json,application/json';migrateFile.hidden=true;
- importButton.after(migrateButton,migrateFile);
  $('drive-workspace-slot').replaceWith($('workspace-name'));$('drive-save-line').append($('workspace-state'));
  const legacy=$('workspace-menu');legacy.hidden=true;legacy.inert=true;foot.append(legacy);document.querySelector('.commandbar .top-actions').remove();
  const style=document.createElement('style');style.textContent=`
@@ -1535,39 +1546,17 @@ function installKnotDrive(){
  $('drive-export').onclick=action(async()=>{const data=await store.exportHistory();if(dirty())data.unconfirmedInput=JSON.parse(snapshot());exportData(data,'knot-drive-pilot-history.json');});
  $('drive-draft').onclick=()=>exportData({format:'knot-unconfirmed-input',document:JSON.parse(snapshot())},'knot-unconfirmed-input.json');
  importButton.onclick=()=>{connection.open=false;importFile.click();};
- migrateButton.onclick=()=>{connection.open=false;migrateFile.click();};
- migrateFile.onchange=async()=>{
+ importFile.onchange=async()=>{
   try{
-   if(!ready||failed||dirty()||job)throw Error('Save current input and reconnect before migrating.');
-   const file=migrateFile.files[0];if(!file)return;if(file.size>192*1024*1024)throw Error('Workspace export exceeds 192 MB.');
+   if(!ready||failed||dirty()||job)throw Error('Save current input and reconnect before importing.');
+   const file=importFile.files[0];if(!file)return;if(file.size>192*1024*1024)throw Error('Workspace export exceeds 192 MB.');
    const captured=snapshot(),plan=await prepareKnotMigration(JSON.parse(captured),JSON.parse(await file.text()));
    if($('projects-dialog').open)$('projects-dialog').close();
-   openDialog('Import Knot workspace',`<p>Add ${plan.cards} cards, ${plan.projects} projects and ${plan.attachments} attachments to the currently open Drive workspace?</p><p>Existing content stays in place. Imported links and relative layout are preserved; project names that already exist get an imported suffix. The old workspace is unchanged.</p><p>Keep this page open until Saved to Drive appears. Imports create a retained version and can be undone.</p>`,()=>{
+   openDialog('Import',`<p>Add ${plan.cards} cards, ${plan.projects} projects and ${plan.attachments} attachments to the currently open Drive workspace?</p><p>Existing content stays in place. Imported links and relative layout are preserved; project names that already exist get an imported suffix. This is a one-time copy; changes do not update the source.</p><p>Keep this page open until Saved to Drive appears. Imports create a retained version and can be undone.</p>`,()=>{
     if(!ready||failed||dirty()||job||snapshot()!==captured)throw Error('The current workspace changed. Cancel and review the import again.');
     mutate('Imported Knot workspace',()=>{restore(plan.document);selected.clear();selectedId=null;});setProject(plan.firstProject);frameBoard();
    },'Add to current workspace');
   }catch(error){if($('projects-dialog').open)$('projects-dialog').close();openDialog('Workspace import stopped','<p>'+escapeHTML(error.message)+'</p><p>No content was added.</p>',()=>{},'Close');}
-  finally{migrateFile.value='';}
- };
- importFile.onchange=async()=>{
-  try{
-   if(!ready||failed||dirty()||job)throw Error('Save current input and reconnect before importing.');
-   const file=importFile.files[0];if(!file)return;if(file.size>1024*1024)throw Error('Task snapshot exceeds 1 MB.');
-   const data=normalizeWorkspaceDocument(JSON.parse(await file.text()));validateDocument(data);
-   const keys=Object.keys(data.projects).filter(p=>p!=='all');
-   if(keys.length!==1||data.projects[keys[0]]!=='AI-managed'||!data.tickets.length||data.tickets.length>200||data.tickets.some(t=>t.project!==keys[0]||(t.attachments||[]).length||t.image)||(data.groups||[]).length)throw Error('Choose a task-only snapshot with one AI-managed project (1–200 cards).');
-   const count=data.tickets.length;
-   openDialog('Import AI-managed tasks',`<p>Add ${count} cards to a new AI-managed project?</p><p>This is a one-time snapshot. Existing projects and SHUKI source tasks are unchanged. Changes in Knot do not update SHUKI.</p>`,()=>{
-    if(!ready||failed||dirty()||job)throw Error('Wait for a confirmed save before importing.');
-    const p=uid('P'),map=new Map(data.tickets.map(t=>[t.id,uid('T')])),offset=Math.max(0,...tickets.map(t=>t.y+cardHeight(t)))+LAYOUT.sectionGap;
-    mutate('Imported AI-managed task snapshot',()=>{
-     projectNames[p]='AI-managed · '+todayISO();
-     const added=data.tickets.map(t=>({...clone(t),id:map.get(t.id),project:p,parent:t.parent?map.get(t.parent):null}));tickets.push(...added);
-     dependencies.push(...data.dependencies.map(([a,b])=>[map.get(a),map.get(b)]));references.push(...(data.references||[]).map(([a,b])=>[map.get(a),map.get(b)]));
-     layoutTickets(added);added.forEach(t=>t.y+=offset);selected.clear();selectedId=null;
-    });setProject(p);frameBoard();
-   },'Add new project');
-  }catch(error){updateStatus('Task import stopped: '+error.message);}
   finally{importFile.value='';}
  };
  $('drive-switch').onclick=action(async()=>{if(dirty()||job)throw Error('Save or export current input before changing workspace.');const folders=await new KnotDriveStore(access).files('workspace');$('drive-folders').replaceChildren(new Option('Choose a workspace',''));folders.forEach(f=>$('drive-folders').add(new Option(f.name,f.id)));$('drive-folders').value=store.folder;connection.open=false;picker.open=true;});
@@ -1588,7 +1577,6 @@ function installKnotDrive(){
    $('drive-open').disabled=!store||!!job||connecting||authRequired;$('drive-create').disabled=!store||ready||!!job||connecting||authRequired;
    $('drive-retry').hidden=!failed||authRequired;$('drive-retry').disabled=!store||!!job||connecting;$('drive-export').disabled=!ready||!!job||connecting||authRequired;$('drive-draft').hidden=!dirty();$('drive-switch').hidden=!ready;$('drive-switch').disabled=dirty()||!!job||authRequired;
    importButton.disabled=!ready||failed||dirty()||!!job||connecting;
-   migrateButton.disabled=importButton.disabled;
   },
   local(){},
   note(){if(!ready)return;if(failed){this.render();return;}if(!dirty()){this.phase=job?'saving':'saved';this.render();return;}this.phase='dirty';this.render();queueMicrotask(()=>this.flush());},
