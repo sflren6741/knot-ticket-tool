@@ -1416,6 +1416,28 @@ class KnotDriveStore {
  }
 }
 
+async function prepareKnotMigration(current,source){
+ const data=normalizeWorkspaceDocument(clone(source));validateDocument(data);validateDocument(current);
+ if(!data.tickets.length)throw Error('The selected workspace has no cards to migrate.');
+ const fingerprint=(await KnotDriveStore.hash(new TextEncoder().encode(stableDocument(data)))).slice(0,20);
+ const prefix='M-'+fingerprint,ids=new Map(data.tickets.map((t,i)=>[t.id,prefix+'-T'+i]));
+ if(current.tickets.some(t=>[...ids.values()].includes(t.id)))throw Error('This workspace export has already been imported, or some of its cards are already present. Nothing was added.');
+ const next=clone(current),projects=new Map(),names=new Set(Object.values(next.projects));
+ for(const [i,key] of Object.keys(data.projects).filter(p=>p!=='all').sort().entries()){
+  const id=prefix+'-P'+i,original=data.projects[key];let name=original,n=1;
+  if(id in next.projects)throw Error('This export has already created projects here. Nothing was added.');
+  while(names.has(name))name=original.slice(0,175)+' (imported'+(n++>1?' '+(n-1):'')+')';
+  names.add(name);projects.set(key,id);next.projects[id]=name;
+ }
+ const offset=current.tickets.length?Math.max(...current.tickets.map(t=>t.y+cardHeight(t)))-Math.min(...data.tickets.map(t=>t.y))+LAYOUT.sectionGap:0;
+ const added=data.tickets.map(t=>({...clone(t),id:ids.get(t.id),project:projects.get(t.project),parent:t.parent?ids.get(t.parent):null,y:t.y+offset}));
+ next.tickets.push(...added);next.dependencies.push(...data.dependencies.map(([a,b])=>[ids.get(a),ids.get(b)]));
+ next.references=[...(next.references||[]),...(data.references||[]).map(([a,b])=>[ids.get(a),ids.get(b)])];
+ next.groups=[...(next.groups||[]),...(data.groups||[]).map((g,i)=>({...clone(g),id:prefix+'-G'+i,ids:g.ids.map(id=>ids.get(id))}))];
+ next.collapsed=[...new Set([...(next.collapsed||[]),...(data.collapsed||[]).map(id=>ids.get(id))])];validateDocument(next);
+ return {document:next,firstProject:projects.values().next().value,cards:added.length,projects:projects.size,attachments:added.reduce((n,t)=>n+(t.attachments||[]).length,0)};
+}
+
 function installKnotDrive(){
  let token=null,expires=0,store=null,ready=false,saved=null,base=null,job=null,poll=null,failed=false,account=null,authRequired=false,connecting=false;
  const empty=()=>({version:2,tickets:[],dependencies:[],projects:{all:'All projects',inbox:'Unsorted'},groups:[],references:[],collapsed:[]});
@@ -1450,6 +1472,9 @@ function installKnotDrive(){
  const importButton=document.createElement('button');importButton.id='drive-import';importButton.textContent='Import AI task snapshot';
  const importFile=document.createElement('input');importFile.id='drive-import-file';importFile.type='file';importFile.accept='.json,application/json';importFile.hidden=true;
  connection.querySelector('.drive-fields').prepend(importButton,importFile);
+ const migrateButton=document.createElement('button');migrateButton.id='drive-migrate';migrateButton.textContent='Import Knot workspace';
+ const migrateFile=document.createElement('input');migrateFile.id='drive-migrate-file';migrateFile.type='file';migrateFile.accept='.json,application/json';migrateFile.hidden=true;
+ importButton.after(migrateButton,migrateFile);
  $('drive-workspace-slot').replaceWith($('workspace-name'));$('drive-save-line').append($('workspace-state'));
  const legacy=$('workspace-menu');legacy.hidden=true;legacy.inert=true;foot.append(legacy);document.querySelector('.commandbar .top-actions').remove();
  const style=document.createElement('style');style.textContent=`
@@ -1510,6 +1535,20 @@ function installKnotDrive(){
  $('drive-export').onclick=action(async()=>{const data=await store.exportHistory();if(dirty())data.unconfirmedInput=JSON.parse(snapshot());exportData(data,'knot-drive-pilot-history.json');});
  $('drive-draft').onclick=()=>exportData({format:'knot-unconfirmed-input',document:JSON.parse(snapshot())},'knot-unconfirmed-input.json');
  importButton.onclick=()=>{connection.open=false;importFile.click();};
+ migrateButton.onclick=()=>{connection.open=false;migrateFile.click();};
+ migrateFile.onchange=async()=>{
+  try{
+   if(!ready||failed||dirty()||job)throw Error('Save current input and reconnect before migrating.');
+   const file=migrateFile.files[0];if(!file)return;if(file.size>192*1024*1024)throw Error('Workspace export exceeds 192 MB.');
+   const captured=snapshot(),plan=await prepareKnotMigration(JSON.parse(captured),JSON.parse(await file.text()));
+   if($('projects-dialog').open)$('projects-dialog').close();
+   openDialog('Import Knot workspace',`<p>Add ${plan.cards} cards, ${plan.projects} projects and ${plan.attachments} attachments to the currently open Drive workspace?</p><p>Existing content stays in place. Imported links and relative layout are preserved; project names that already exist get an imported suffix. The old workspace is unchanged.</p><p>Keep this page open until Saved to Drive appears. Imports create a retained version and can be undone.</p>`,()=>{
+    if(!ready||failed||dirty()||job||snapshot()!==captured)throw Error('The current workspace changed. Cancel and review the import again.');
+    mutate('Imported Knot workspace',()=>{restore(plan.document);selected.clear();selectedId=null;});setProject(plan.firstProject);frameBoard();
+   },'Add to current workspace');
+  }catch(error){if($('projects-dialog').open)$('projects-dialog').close();openDialog('Workspace import stopped','<p>'+escapeHTML(error.message)+'</p><p>No content was added.</p>',()=>{},'Close');}
+  finally{migrateFile.value='';}
+ };
  importFile.onchange=async()=>{
   try{
    if(!ready||failed||dirty()||job)throw Error('Save current input and reconnect before importing.');
@@ -1549,6 +1588,7 @@ function installKnotDrive(){
    $('drive-open').disabled=!store||!!job||connecting||authRequired;$('drive-create').disabled=!store||ready||!!job||connecting||authRequired;
    $('drive-retry').hidden=!failed||authRequired;$('drive-retry').disabled=!store||!!job||connecting;$('drive-export').disabled=!ready||!!job||connecting||authRequired;$('drive-draft').hidden=!dirty();$('drive-switch').hidden=!ready;$('drive-switch').disabled=dirty()||!!job||authRequired;
    importButton.disabled=!ready||failed||dirty()||!!job||connecting;
+   migrateButton.disabled=importButton.disabled;
   },
   local(){},
   note(){if(!ready)return;if(failed){this.render();return;}if(!dirty()){this.phase=job?'saving':'saved';this.render();return;}this.phase='dirty';this.render();queueMicrotask(()=>this.flush());},
