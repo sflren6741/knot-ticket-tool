@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="color-scheme" content="light">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://accounts.google.com; connect-src https://www.googleapis.com https://accounts.google.com; style-src 'unsafe-inline' https://accounts.google.com; img-src data: blob:; frame-src https://accounts.google.com; font-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' https://accounts.google.com; connect-src https://www.googleapis.com https://accounts.google.com; style-src 'unsafe-inline' https://accounts.google.com; img-src 'self' data: blob:; manifest-src 'self'; frame-src https://accounts.google.com; font-src 'none'; base-uri 'none'; form-action 'none'">
 <title>knot — チケット管理ツール</title>
 <style>
 :root{color-scheme:light;--bg:#f5f6f8;--paper:#fff;--ink:#202938;--muted:#5e697a;--line:#dfe4eb;--subtle:#edf0f4;--accent:#2a78d6;--accent-ink:#18549b;--wash:#edf4fe;--warn:#825600;--warn-bg:#fff3d6;--good:#296246;--good-bg:#eaf3ee;--branch:#7b8798;--shadow:0 3px 12px #20293809;--radius:10px;--sidebar:196px;--details:312px}
@@ -190,6 +190,13 @@ button{border:1px solid var(--line);background:var(--paper);border-radius:7px;mi
  :root:not(.sidebar-closed) #sidebar-toggle{display:none}#details-close{margin-left:auto}
 }
 </style>
+<meta name="theme-color" content="#2a78d6">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Knot">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/knot-32.png" type="image/png" sizes="32x32">
+<link rel="apple-touch-icon" href="./icons/knot-180.png" sizes="180x180">
 </head>
 <body>
 <svg aria-hidden="true" style="position:absolute;width:0;height:0;overflow:hidden"><defs>
