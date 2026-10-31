@@ -1295,7 +1295,7 @@ class KnotDriveStore {
  static id(value){if(typeof value!=='string'||!/^[-\w]{1,200}$/.test(value))throw Error('Invalid Drive identifier.');return value;}
  static async hash(bytes){return [...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(x=>x.toString(16).padStart(2,'0')).join('');}
  async api(path,{method='GET',body,headers={},raw=false}={}){
-  const token=this.token();if(!token)throw Error('Connect to Google Drive first.');
+  const token=this.token();if(!token)throw Object.assign(Error('Google session expired. Reconnect to continue.'),{status:401});
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),30000);
   try{
    const response=await fetch('https://www.googleapis.com/'+path,{method,body,headers:{Authorization:'Bearer '+token,...headers},cache:'no-store',signal:controller.signal});
@@ -1336,12 +1336,12 @@ class KnotDriveStore {
   if(this.folder)throw Error('A workspace is already open.');
   const id=await this.allocate();
   await this.api('drive/v3/files?fields=id',{method:'POST',body:JSON.stringify({id,name:name.trim()||'Knot test workspace',mimeType:'application/vnd.google-apps.folder',appProperties:{knotPilot:'1',kind:'workspace'}}),headers:{'Content-Type':'application/json'}});
-  this.folder=id;return id;
+  this.folder=id;this.name=name.trim()||'Knot test workspace';return id;
  }
  async open(folder){
-  KnotDriveStore.id(folder);const meta=await this.api('drive/v3/files/'+folder+'?fields=id,mimeType,appProperties,trashed');
+  KnotDriveStore.id(folder);const meta=await this.api('drive/v3/files/'+folder+'?fields=id,name,mimeType,appProperties,trashed');
   if(meta.trashed||meta.mimeType!=='application/vnd.google-apps.folder'||meta.appProperties?.knotPilot!=='1'||meta.appProperties?.kind!=='workspace')throw Error('Choose a Knot pilot workspace created by this app.');
-  this.folder=folder;this.assets.clear();this.confirmedAssets.clear();this.pending=null;return this.load();
+  this.folder=folder;this.name=meta.name||'Knot workspace';this.assets.clear();this.confirmedAssets.clear();this.pending=null;return this.load();
  }
  async revisions(){
   if(!this.folder)throw Error('Select a pilot workspace first.');
@@ -1417,58 +1417,145 @@ class KnotDriveStore {
 }
 
 function installKnotDrive(){
- let token=null,expires=0,store=null,ready=false,saved=null,base=null,job=null,poll=null,failed=false;
+ let token=null,expires=0,store=null,ready=false,saved=null,base=null,job=null,poll=null,failed=false,account=null,authRequired=false,connecting=false;
  const empty=()=>({version:2,tickets:[],dependencies:[],projects:{all:'All projects',inbox:'Unsorted'},groups:[],references:[],collapsed:[]});
- restore(empty());selected.clear();selectedId=null;
- document.querySelector('.sidebar-foot').textContent='Drive pilot: a separate test workspace. Versions and attachments are stored in Google Drive. Editing requires a connection. Browser storage holds no pilot documents or tokens.';
- const nativeDetails=renderDetails;
- renderDetails=function(){nativeDetails();const note=document.querySelector('.detail-note');if(note)note.textContent='Changes are saved to the selected Drive test workspace. The save indicator changes only after Drive confirms the version.';const hint=$('attachment-input')?.closest('label')?.nextElementSibling;if(hint?.tagName==='SMALL')hint.textContent='3 MB per file. Attachments are stored separately in the selected Drive workspace.';};
- for(const p of $('help-dialog').querySelectorAll('p'))if(p.textContent.includes('単体HTML')||p.textContent.includes('フォルダー')||p.textContent.startsWith('上部の状態'))p.textContent='Drive pilot: connect with Google, then create or open a separate test workspace. Saved versions and attachments live in Drive. A failed save pauses editing and retains unconfirmed input on this open page. Download complete history to preserve conflicting versions. No production workspace is imported.';
- const bar=document.createElement('section');bar.id='drive-pilot';bar.setAttribute('aria-label','Experimental Google Drive workspace');
- bar.innerHTML='<strong>Drive pilot — separate test workspace</strong> <label>Web client ID <input id="drive-client" autocomplete="off" value="344451565597-ltfh7fs18n5a9h8a9hoh9rr93h8o1dos.apps.googleusercontent.com" placeholder="…apps.googleusercontent.com"></label> <button id="drive-connect">Connect Google Drive</button> <label>Workspace <select id="drive-folders"><option value="">Choose a test workspace</option></select></label> <button id="drive-open">Open</button> <button id="drive-create">Create empty test workspace</button> <button id="drive-retry" disabled>Retry / check connection</button> <button id="drive-export" disabled>Download complete history</button> <span id="drive-status" role="status">Not connected. No workspace has been uploaded.</span>';
- document.body.prepend(bar);
- const connection=document.createElement('details');connection.id='drive-connection';connection.open=true;
- const summary=document.createElement('summary');summary.textContent='Drive pilot connection ▾';
- const fields=document.createElement('div');fields.className='drive-fields';
- while(bar.firstChild)fields.append(bar.firstChild);
- fields.querySelector('strong').remove();const statusLine=fields.querySelector('#drive-status');statusLine.remove();
- connection.append(summary,fields);bar.append(connection,statusLine);
- const style=document.createElement('style');style.textContent='#drive-pilot{flex-shrink:0;padding:6px 10px;background:var(--paper);border-bottom:1px solid var(--line);font-size:12px}#drive-connection>summary{display:flex;align-items:center;min-height:44px;font-weight:600;cursor:pointer}#drive-connection .drive-fields{display:flex;gap:8px;align-items:center;flex-wrap:wrap;max-height:55dvh;overflow:auto;padding-bottom:6px}#drive-pilot label{display:flex;gap:6px;align-items:center;max-width:100%}#drive-pilot input{width:260px;min-width:0}#drive-pilot button,#drive-pilot input,#drive-pilot select{min-height:44px}#drive-status{display:block;overflow-wrap:anywhere}body:has(#drive-pilot){height:100dvh;display:flex;flex-direction:column}body:has(#drive-pilot)>.app{flex:1;min-height:0;height:auto}@media(max-width:979px){body:has(#drive-pilot) .mobile-actions[open]>.actions-popup{top:var(--drive-actions-top,52px);max-height:calc(var(--mobile-height,100dvh) - var(--drive-actions-top,52px) - 12px)}}';document.head.append(style);
- const positionActions=()=>{$('actions-menu').style.setProperty('--drive-actions-top',Math.ceil($('actions-menu').getBoundingClientRect().bottom+4)+'px');};
- new ResizeObserver(positionActions).observe(bar);window.addEventListener('resize',positionActions);window.visualViewport?.addEventListener('resize',positionActions);
+ const access=()=>Date.now()<expires?token:null;
  const dirty=()=>ready&&snapshot()!==saved;
- const status=(message,error=false)=>{$('drive-status').textContent=message;failed=error;document.querySelector('.app').inert=!ready||failed;Workspace.error=error?message:'';Workspace.render();};
- function stop(error){clearTimeout(poll);connection.open=true;Workspace.phase=error.conflict?'conflict':'error';status(error.message,true);}
- function adopt(state){restore(state.document||empty());base=state.id;saved=snapshot();ready=true;failed=false;Workspace.handle=Object.freeze({kind:'shared',name:'Google Drive pilot'});undoStack=[];redoStack=[];Workspace.phase='saved';connection.open=false;renderAll();frameBoard();status('Drive-confirmed workspace loaded. Workspace ID: '+store.folder);}
- async function refresh(){clearTimeout(poll);if(!ready||failed||job)return;
+ restore(empty());selected.clear();selectedId=null;
+ const nativeCard=cardHTML;
+ cardHTML=t=>nativeCard(t).replace('class="state-badge"','class="state-badge" data-card-state="'+escapeHTML(t.state)+'"').replace('class="card-title-edit mobile-only"','hidden class="card-title-edit mobile-only"');
+ // Independent streams remain stacked; branches of the same workflow share rows.
+ layoutTickets=function(items){
+  let top=LAYOUT.top;const ids=new Set(items.map(t=>t.id));
+  for(const p of Object.keys(projectNames).filter(k=>k!=='all')){
+   const roots=items.filter(t=>t.project===p&&!ids.has(t.parent)),remaining=new Set(roots.map(t=>t.id));
+   for(const root of roots){
+    if(!remaining.has(root.id))continue;
+    const component=new Set([root.id]),todo=[root.id];remaining.delete(root.id);
+    while(todo.length){const id=todo.pop();for(const [from,to] of dependencies){const next=from===id?to:to===id?from:null;if(remaining.has(next)){remaining.delete(next);component.add(next);todo.push(next);}}}
+    const block=layoutSteps(roots.filter(t=>component.has(t.id)),items);
+    block.places.forEach(({t,x,y})=>{t.x=LAYOUT.left+x;t.y=top+y;});top+=block.h+LAYOUT.rowGap;
+   }
+   if(roots.length)top+=LAYOUT.sectionGap-LAYOUT.rowGap;
+  }
+ };
+ const nativeDetails=renderDetails;
+ renderDetails=function(){nativeDetails();const note=document.querySelector('.detail-note');if(note)note.textContent='Saved to your selected Google Drive workspace after confirmation.';const hint=$('attachment-input')?.closest('label')?.nextElementSibling;if(hint?.tagName==='SMALL')hint.textContent='3 MB per file. Attachments are stored separately in the selected Drive workspace.';};
+ for(const p of $('help-dialog').querySelectorAll('p'))if(p.textContent.includes('単体HTML')||p.textContent.includes('フォルダー')||p.textContent.startsWith('上部の状態'))p.textContent='Use the sidebar to connect Google Drive and open a workspace. Changes save after Drive confirms them. On a failed save, editing pauses and unconfirmed input stays on this page. Recovery and complete version exports are in the account menu. This online preview retains up to 200 versions; it does not import your local workspace.';
+ const foot=document.querySelector('.sidebar-foot');foot.replaceChildren();
+ const bar=document.createElement('section');bar.id='drive-pilot';bar.setAttribute('aria-label','Google Drive connection');
+ bar.innerHTML=`<div class="drive-account"><span id="drive-avatar" aria-hidden="true">G</span><div class="drive-account-copy"><strong id="drive-user">Google Drive</strong><span id="drive-identity">Not connected</span></div><details id="drive-connection"><summary aria-label="Connection options" title="Connection options">⋯</summary><div class="drive-fields"><label id="drive-client-field">Google web client ID<input id="drive-client" autocomplete="off" value="344451565597-ltfh7fs18n5a9h8a9hoh9rr93h8o1dos.apps.googleusercontent.com" placeholder="…apps.googleusercontent.com"></label><button id="drive-switch" hidden>Choose another workspace</button><button id="drive-retry" hidden disabled>Retry save / connection</button><button id="drive-draft" hidden>Download unconfirmed input</button><button id="drive-export" disabled>Download complete history</button><small>Online preview · up to 200 saved versions. Tokens and cards are not stored in browser storage.</small></div></details></div><div class="drive-google-state"><span id="drive-google-mark" aria-hidden="true">G</span><span id="drive-health">Not connected</span></div><button id="drive-connect" class="primary">Connect Google Drive</button><details id="drive-workspace-picker"><summary aria-label="Choose workspace">${svgIcon('folder')}<span id="drive-workspace-slot"></span><span aria-hidden="true">⌄</span></summary><div class="drive-picker-fields"><label>Workspace<select id="drive-folders"><option value="">Choose a workspace</option></select></label><button id="drive-open" disabled>Open workspace</button><label>New workspace name<input id="drive-new-name" value="My workspace" maxlength="200"></label><button id="drive-create" disabled>Create new workspace</button></div></details><div id="drive-save-line"></div><p id="drive-status" role="status">Connect Google Drive to open your workspace.</p>`;
+ foot.append(bar);
+ const connection=$('drive-connection'),picker=$('drive-workspace-picker');
+ const importButton=document.createElement('button');importButton.id='drive-import';importButton.textContent='Import AI task snapshot';
+ const importFile=document.createElement('input');importFile.id='drive-import-file';importFile.type='file';importFile.accept='.json,application/json';importFile.hidden=true;
+ connection.querySelector('.drive-fields').prepend(importButton,importFile);
+ $('drive-workspace-slot').replaceWith($('workspace-name'));$('drive-save-line').append($('workspace-state'));
+ const legacy=$('workspace-menu');legacy.hidden=true;legacy.inert=true;foot.append(legacy);document.querySelector('.commandbar .top-actions').remove();
+ const style=document.createElement('style');style.textContent=`
+ :root{--sidebar:232px;--state-active-ink:var(--accent-ink);--state-active-bg:var(--wash);--state-done-ink:var(--good);--state-done-bg:var(--good-bg);--state-paused-ink:var(--warn);--state-paused-bg:var(--warn-bg)}
+ .sidebar{min-height:0;gap:20px}.sidebar>nav{min-height:44px;overflow:auto}.sidebar-foot{padding:14px 2px 0;flex-shrink:0;max-height:64%;overflow:visible}#workspace-menu[hidden]{display:none!important}
+ #drive-pilot{font-size:12px;position:relative;white-space:normal}#drive-pilot [hidden]{display:none!important}.drive-account{display:flex;gap:9px;align-items:center}.drive-account-copy{min-width:0;flex:1}.drive-account-copy strong{margin:0;font-size:13px;font-weight:600}.drive-account-copy span{display:block;font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#drive-avatar{width:34px;height:34px;border-radius:50%;background:var(--wash);color:var(--accent-ink);display:grid;place-items:center;flex:none;font-size:15px;font-weight:600}
+ #drive-connection>summary{list-style:none;min-width:36px;min-height:44px;display:grid;place-items:center;cursor:pointer;border-radius:7px;font-size:20px}#drive-connection>summary::-webkit-details-marker,#drive-workspace-picker>summary::-webkit-details-marker{display:none}#drive-connection>summary:focus-visible,#drive-workspace-picker>summary:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+ .drive-fields{position:absolute;bottom:calc(100% + 8px);left:0;z-index:90;background:var(--paper);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:8px;width:min(290px,calc(100vw - 36px));max-height:52dvh;overflow:auto}.drive-fields>button{width:100%;text-align:left;border:0}.drive-fields small{display:block;font-size:10px;color:var(--muted);padding:8px}.drive-google-state{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--muted);padding:5px 0 3px}#drive-google-mark{font-weight:700;color:var(--accent-ink)}#drive-health:before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--muted);margin-right:5px}#drive-pilot[data-connection="connected"] #drive-health:before{background:var(--good)}#drive-pilot[data-connection="paused"] #drive-health:before{background:var(--warn)}
+ #drive-connect{width:100%;margin:5px 0}#drive-workspace-picker>summary{display:flex;align-items:center;gap:7px;min-height:44px;cursor:pointer;list-style:none}#drive-workspace-picker>summary>span:last-child{margin-left:auto}#workspace-name{max-width:none;min-width:0;flex:1;font-size:12px}.drive-picker-fields{display:grid;gap:6px;padding-bottom:6px;max-height:34dvh;overflow:auto}#drive-pilot label{display:grid;gap:4px;font-size:11px;min-width:0}#drive-pilot input,#drive-pilot select{width:100%;min-width:0;max-width:100%;border:1px solid var(--line);border-radius:6px;background:var(--paper);padding:5px}#drive-pilot button,#drive-pilot input,#drive-pilot select{min-height:44px}#drive-save-line .workspace-state{display:block;font-size:11px;white-space:normal;padding:5px 0;border:0;background:none;color:var(--muted)}#drive-save-line .workspace-state:before{content:'✓';margin-right:6px}#drive-pilot[data-connection="paused"] #drive-save-line .workspace-state:before{content:'!'}#drive-status{margin:5px 0 0;font-size:11px;overflow-wrap:anywhere;color:var(--muted)}#drive-pilot[data-connection="paused"] #drive-status{color:var(--warn)}
+ #drive-pilot #workspace-name{display:block!important}
+ .gantt-header{position:sticky;top:0;z-index:5;background:var(--bg)}.gantt-label-head{z-index:6}
+ .state-badge{display:inline-flex;align-items:center;gap:4px;color:var(--muted);background:var(--subtle)}.state-badge:before{content:'';width:5px;height:5px;border-radius:50%;background:currentColor}.state-badge[data-card-state="進行中"]{color:var(--state-active-ink);background:var(--state-active-bg)}.state-badge[data-card-state="完了"]{color:var(--state-done-ink);background:var(--state-done-bg)}.state-badge[data-card-state="保留"]{color:var(--state-paused-ink);background:var(--state-paused-bg)}
+ @media(max-width:979px){.mobile-sheet .sidebar-foot{padding:10px 0 0;max-height:65%}.mobile-sheet .sidebar{gap:12px}.mobile-sheet .sidebar>nav{min-height:44px}.mobile-sheet .drive-fields{max-height:50dvh}.mobile-actions[open]>.actions-popup{top:var(--drive-actions-top,52px);max-height:calc(var(--mobile-height,100dvh) - var(--drive-actions-top,52px) - 12px)}}
+ `;document.head.append(style);
+ const positionActions=()=>{$('actions-menu').style.setProperty('--drive-actions-top',Math.ceil($('actions-menu').getBoundingClientRect().bottom+4)+'px');};
+ new ResizeObserver(positionActions).observe(document.querySelector('.commandbar'));window.addEventListener('resize',positionActions);window.visualViewport?.addEventListener('resize',positionActions);
+ function showSidebar(){
+  if(mobileScreen.matches){if($('details-dialog').open)$('details-dialog').close();if(!$('projects-dialog').open)$('projects-dialog').showModal();}
+  else{panelState.sidebar=true;applyPanels();}
+ }
+ function gate(){
+  const blocked=!ready||failed;
+  document.querySelector('.app').inert=false;document.querySelector('.work-row').inert=blocked;$('ticket-details').inert=blocked;document.querySelector('#project-sidebar>nav').inert=blocked;
+  for(const item of document.querySelectorAll('.commandbar .toolbar > *, #new-button, #new-memo, #arrange-button, #fit-button, #undo-button, #redo-button, #zoom-menu, #help-button'))item.inert=blocked&&!['sidebar-toggle','projects-button'].includes(item.id);
+ }
+ const status=(message,error=false)=>{$('drive-status').textContent=message;failed=error;Workspace.error=error?message:'';Workspace.render();};
+ function stop(error){clearTimeout(poll);authRequired=error.status===401||!access();connection.open=!authRequired;Workspace.phase=error.conflict?'conflict':'error';status(error.message,true);showSidebar();}
+ function adopt(state){restore(state.document||empty());base=state.id;saved=snapshot();ready=true;failed=false;authRequired=false;Workspace.handle=Object.freeze({kind:'shared',name:store.name});undoStack=[];redoStack=[];Workspace.phase='saved';connection.open=false;picker.open=false;renderAll();frameBoard();status('Saved workspace loaded from Drive.');if($('projects-dialog').open)$('projects-dialog').close();}
+ async function refresh(){clearTimeout(poll);if(!ready||failed||job)return;if(connecting){poll=setTimeout(refresh,5000);return;}
   try{const state=await store.load();if(state.id!==base){if(dirty())throw Object.assign(Error('Another device changed the workspace. Your input is still here; save it as a retained version.'),{conflict:true});if(!document.activeElement?.closest('input,textarea,select')&&!gesture&&!pinch&&!document.querySelector('dialog[open]'))adopt(state);}poll=setTimeout(refresh,5000);}catch(error){stop(error);}
+ }
+ async function openWorkspace(folder){
+  if(dirty()||job)throw Error('Save or export current input before changing workspace.');
+  const candidate=new KnotDriveStore(access);const state=await candidate.open(folder);store=candidate;adopt(state);refresh();
  }
  async function connect(){
   if(job)throw Error('Wait for the current save before reconnecting.');
-  const client=$('drive-client').value.trim();if(!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(client))throw Error('Enter a Google OAuth web client ID. No client secret is needed.');
+  const client=$('drive-client').value.trim();if(!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(client)){connection.open=true;throw Error('Enter a Google OAuth web client ID in connection options. No client secret is needed.');}
   if(location.protocol!=='https:'&&!['localhost','127.0.0.1'].includes(location.hostname))throw Error('Open this HTML at a registered HTTPS URL or localhost for Google sign-in.');
   if(!globalThis.google?.accounts?.oauth2)await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='https://accounts.google.com/gsi/client';script.onload=resolve;script.onerror=()=>reject(Error('Google sign-in could not load.'));document.head.append(script);});
   await new Promise((resolve,reject)=>google.accounts.oauth2.initTokenClient({client_id:client,scope:'https://www.googleapis.com/auth/drive.file',callback:result=>{if(result.error){reject(Error('Google authorization was not completed.'));return;}token=result.access_token;expires=Date.now()+Number(result.expires_in)*1000;resolve();},error_callback:()=>reject(Error('Google sign-in was cancelled or blocked.'))}).requestAccessToken());
+  const candidate=new KnotDriveStore(access);const {user}=await candidate.api('drive/v3/about?fields=user(displayName,emailAddress,permissionId)');
+  if(!user?.permissionId)throw Error('Google account identity could not be confirmed. Reconnect to continue.');
+  if(account&&account.permissionId!==user.permissionId){token=null;expires=0;throw Object.assign(Error('A different Google account was selected. Reconnect with the original account; your unconfirmed input is still here.'),{status:401});}
+  account=user;authRequired=false;
   if(ready){status('Reconnected. Checking unconfirmed input.');if(dirty())await Workspace.flush();else{adopt(await store.load());refresh();}return;}
-  store=new KnotDriveStore(()=>Date.now()<expires?token:null);$('drive-client').disabled=true;
-  const folders=await store.files('workspace');const select=$('drive-folders');select.replaceChildren(new Option('Choose a test workspace',''));folders.forEach(f=>select.add(new Option(f.name,f.id)));
-  status('Connected. Open or create a separate test workspace.');
+  store=candidate;$('drive-client').disabled=true;
+  const folders=await store.files('workspace');const select=$('drive-folders');select.replaceChildren(new Option('Choose a workspace',''));folders.forEach(f=>select.add(new Option(f.name,f.id)));
+  status('Connected. Choose or create a workspace.');connection.open=false;
+  if(folders.length===1)await openWorkspace(folders[0].id);else{picker.open=true;showSidebar();}
  }
- const action=fn=>async()=>{try{await fn();}catch(error){stop(error);}};
- $('drive-connect').onclick=action(connect);
- $('drive-open').onclick=action(async()=>{if(!store)throw Error('Connect first.');if(dirty()||job)throw Error('Save or export current input first.');adopt(await store.open($('drive-folders').value));refresh();});
- $('drive-create').onclick=action(async()=>{if(!store)throw Error('Connect first.');if(ready)throw Error('Reload before creating another test workspace.');await store.createWorkspace('Knot test workspace');adopt({id:null,document:empty()});await Workspace.flush(true);refresh();});
- $('drive-retry').onclick=action(async()=>{if(!store)throw Error('Connect first.');failed=false;if(dirty())await Workspace.flush();else{adopt(await store.load());refresh();}});
- $('drive-export').onclick=action(async()=>{const data=await store.exportHistory();if(dirty())data.unconfirmedInput=JSON.parse(snapshot());const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));download(url,'knot-drive-pilot-history.json');setTimeout(()=>URL.revokeObjectURL(url),10000);});
+ const action=fn=>async()=>{try{await fn();}catch(error){stop(error);}finally{Workspace.render();}};
+ $('drive-connect').onclick=action(async()=>{if(connecting)return;connecting=true;Workspace.render();try{await connect();}finally{connecting=false;}});
+ $('drive-open').onclick=action(async()=>{if(!store)throw Error('Connect first.');await openWorkspace($('drive-folders').value);});
+ $('drive-create').onclick=action(async()=>{if(!store)throw Error('Connect first.');if(ready)throw Error('Open another workspace or reload before creating a new one.');await store.createWorkspace($('drive-new-name').value);adopt({id:null,document:empty()});await Workspace.flush(true);refresh();});
+ $('drive-retry').onclick=action(async()=>{if(!store)throw Error('Connect first.');failed=false;if(dirty())await Workspace.flush();else if(ready){adopt(await store.load());refresh();}else{const folders=await store.files('workspace');$('drive-folders').replaceChildren(new Option('Choose a workspace',''));folders.forEach(f=>$('drive-folders').add(new Option(f.name,f.id)));status('Connected. Choose or create a workspace.');picker.open=true;}});
+ const exportData=(data,name)=>{const url=URL.createObjectURL(new Blob([JSON.stringify(data)],{type:'application/json'}));download(url,name);setTimeout(()=>URL.revokeObjectURL(url),10000);};
+ $('drive-export').onclick=action(async()=>{const data=await store.exportHistory();if(dirty())data.unconfirmedInput=JSON.parse(snapshot());exportData(data,'knot-drive-pilot-history.json');});
+ $('drive-draft').onclick=()=>exportData({format:'knot-unconfirmed-input',document:JSON.parse(snapshot())},'knot-unconfirmed-input.json');
+ importButton.onclick=()=>{connection.open=false;importFile.click();};
+ importFile.onchange=async()=>{
+  try{
+   if(!ready||failed||dirty()||job)throw Error('Save current input and reconnect before importing.');
+   const file=importFile.files[0];if(!file)return;if(file.size>1024*1024)throw Error('Task snapshot exceeds 1 MB.');
+   const data=normalizeWorkspaceDocument(JSON.parse(await file.text()));validateDocument(data);
+   const keys=Object.keys(data.projects).filter(p=>p!=='all');
+   if(keys.length!==1||data.projects[keys[0]]!=='AI-managed'||!data.tickets.length||data.tickets.length>200||data.tickets.some(t=>t.project!==keys[0]||(t.attachments||[]).length||t.image)||(data.groups||[]).length)throw Error('Choose a task-only snapshot with one AI-managed project (1–200 cards).');
+   const count=data.tickets.length;
+   openDialog('Import AI-managed tasks',`<p>Add ${count} cards to a new AI-managed project?</p><p>This is a one-time snapshot. Existing projects and SHUKI source tasks are unchanged. Changes in Knot do not update SHUKI.</p>`,()=>{
+    if(!ready||failed||dirty()||job)throw Error('Wait for a confirmed save before importing.');
+    const p=uid('P'),map=new Map(data.tickets.map(t=>[t.id,uid('T')])),offset=Math.max(0,...tickets.map(t=>t.y+cardHeight(t)))+LAYOUT.sectionGap;
+    mutate('Imported AI-managed task snapshot',()=>{
+     projectNames[p]='AI-managed · '+todayISO();
+     const added=data.tickets.map(t=>({...clone(t),id:map.get(t.id),project:p,parent:t.parent?map.get(t.parent):null}));tickets.push(...added);
+     dependencies.push(...data.dependencies.map(([a,b])=>[map.get(a),map.get(b)]));references.push(...(data.references||[]).map(([a,b])=>[map.get(a),map.get(b)]));
+     layoutTickets(added);added.forEach(t=>t.y+=offset);selected.clear();selectedId=null;
+    });setProject(p);frameBoard();
+   },'Add new project');
+  }catch(error){updateStatus('Task import stopped: '+error.message);}
+  finally{importFile.value='';}
+ };
+ $('drive-switch').onclick=action(async()=>{if(dirty()||job)throw Error('Save or export current input before changing workspace.');const folders=await new KnotDriveStore(access).files('workspace');$('drive-folders').replaceChildren(new Option('Choose a workspace',''));folders.forEach(f=>$('drive-folders').add(new Option(f.name,f.id)));$('drive-folders').value=store.folder;connection.open=false;picker.open=true;});
+ document.addEventListener('click',event=>{if(!connection.contains(event.target))connection.open=false;});
+ connection.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();connection.open=false;connection.querySelector('summary').focus();event.stopPropagation();}});
  Object.assign(Workspace,{
-  boot(){status('Connect to Google Drive to open a separate test workspace.');},
-  render(){const gate=$('folder-gate');if(gate)gate.hidden=true;document.querySelector('.app').inert=!ready||failed;$('workspace-state').textContent=({saved:'Saved to Drive',saving:'Saving to Drive',dirty:'Not confirmed',error:'Saving stopped',conflict:'Versions need review'})[this.phase]||'Drive pilot';$('workspace-name').textContent='Google Drive pilot';$('open-workspace').disabled=true;$('reopen-workspace').hidden=true;$('save-workspace').disabled=!ready||!!job;$('drive-retry').disabled=!store||!!job;$('drive-export').disabled=!ready||!!job;},
+  boot(){connection.open=!$('drive-client').value;status('Connect Google Drive to open your workspace.');requestAnimationFrame(()=>{if(!ready)showSidebar();});},
+  render(){
+   const nativeGate=$('folder-gate');if(nativeGate)nativeGate.hidden=true;gate();
+   const connected=!!account&&!authRequired;
+   bar.dataset.connection=failed?'paused':connected?'connected':'disconnected';
+   $('drive-user').textContent=account?.displayName||'Google Drive';$('drive-identity').textContent=account?.emailAddress||'Connect your account';$('drive-identity').title=account?.emailAddress||'';$('drive-avatar').textContent=(account?.displayName||'G').slice(0,1);
+   $('drive-health').textContent=connecting?'Connecting…':authRequired?'Reconnect Google':failed?'Connection paused':connected?'Google connected':'Not connected';
+   $('workspace-state').textContent=({saved:'Saved to Drive',saving:'Saving to Drive…',dirty:'Waiting for confirmation',error:'Saving paused',conflict:'Versions need review'})[this.phase]||(connected?'Choose a workspace':'Not connected');
+   $('workspace-name').textContent=ready?store.name:'Choose workspace';$('workspace-name').title=ready?store.name:'';
+   $('drive-status').hidden=ready&&!failed;$('drive-connect').hidden=connected&&!authRequired;$('drive-connect').textContent=authRequired?'Reconnect Google Drive':'Connect Google Drive';$('drive-connect').disabled=connecting||!!job;
+   $('drive-client-field').hidden=/^[\w.-]+\.apps\.googleusercontent\.com$/.test($('drive-client').value.trim());$('drive-client').disabled=!!account;
+   $('drive-open').disabled=!store||!!job||connecting||authRequired;$('drive-create').disabled=!store||ready||!!job||connecting||authRequired;
+   $('drive-retry').hidden=!failed||authRequired;$('drive-retry').disabled=!store||!!job||connecting;$('drive-export').disabled=!ready||!!job||connecting||authRequired;$('drive-draft').hidden=!dirty();$('drive-switch').hidden=!ready;$('drive-switch').disabled=dirty()||!!job||authRequired;
+   importButton.disabled=!ready||failed||dirty()||!!job||connecting;
+  },
   local(){},
   note(){if(!ready)return;if(failed){this.render();return;}if(!dirty()){this.phase=job?'saving':'saved';this.render();return;}this.phase='dirty';this.render();queueMicrotask(()=>this.flush());},
   async flush(force=false){
    if(!ready||failed)return;if(job){await job;return;}if(!dirty()&&!force){this.phase='saved';this.render();return;}
    const captured=snapshot();this.phase='saving';this.render();
-   job=(async()=>{try{const state=await store.commit(JSON.parse(captured),base);base=state.id;saved=captured;this.phase=dirty()?'dirty':'saved';status('Save confirmed by Drive. Workspace ID: '+store.folder);}catch(error){stop(error);}finally{job=null;this.render();}})();
+   job=(async()=>{try{const state=await store.commit(JSON.parse(captured),base);base=state.id;saved=captured;this.phase=dirty()?'dirty':'saved';status('Save confirmed by Drive.');}catch(error){stop(error);}finally{job=null;this.render();}})();
    await job;if(!failed&&dirty())await this.flush();else if(!failed){clearTimeout(poll);poll=setTimeout(refresh,5000);}
   },
   retry(){return $('drive-retry').onclick();},reopen(){return $('drive-retry').onclick();},pick(){return Promise.resolve();}
